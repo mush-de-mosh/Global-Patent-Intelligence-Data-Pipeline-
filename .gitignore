@@ -5,14 +5,22 @@ dataset/
 # Generated database
 *.db
 
-# Logs and cache
+# Logs, temp and cache
 *.log
+*.txt
 __pycache__/
 *.pyc
+D:/tmp_pipeline/
 
 # OS
 .DS_Store
 Thumbs.db
 
-# reports are generated — keep CSVs but ignore PNGs if preferred
-# reports/*.png
+# Track clean CSVs in data/ explicitly
+!data/
+!data/*.csv
+
+# Ignore generated report CSVs and PNGs
+reports/*.csv
+reports/*.json
+reports/*.png
