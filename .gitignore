@@ -1,5 +1,18 @@
-﻿*.tsv
-*.csv
+# Raw data — too large for GitHub
+*.tsv
 dataset/
+
+# Generated database
+*.db
+
+# Logs and cache
 *.log
 __pycache__/
+*.pyc
+
+# OS
+.DS_Store
+Thumbs.db
+
+# reports are generated — keep CSVs but ignore PNGs if preferred
+# reports/*.png
