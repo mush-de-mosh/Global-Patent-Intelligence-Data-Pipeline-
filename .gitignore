@@ -10,17 +10,22 @@ dataset/
 *.txt
 __pycache__/
 *.pyc
-D:/tmp_pipeline/
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Track clean CSVs in data/ explicitly
-!data/
-!data/*.csv
+# Large clean CSVs — regenerate with: python pipeline.py
+data/clean_patents.csv
+data/clean_inventors.csv
+data/clean_companies.csv
 
-# Ignore generated report CSVs and PNGs
+# Keep sample CSVs (small, for reference)
+!data/sample_patents.csv
+!data/sample_inventors.csv
+!data/sample_companies.csv
+
+# Ignore generated report outputs
 reports/*.csv
 reports/*.json
 reports/*.png
