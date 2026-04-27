@@ -16,8 +16,8 @@ DROP TABLE IF EXISTS patents;
 CREATE TABLE patents (
     patent_id   TEXT PRIMARY KEY,
     title       TEXT,
-    abstract    TEXT,
     filing_date TEXT,       -- YYYY-MM-DD (from g_application)
+    grant_date  TEXT,       -- YYYY-MM-DD (from g_patent)
     year        INTEGER     -- grant year  (from g_patent)
 );
 
