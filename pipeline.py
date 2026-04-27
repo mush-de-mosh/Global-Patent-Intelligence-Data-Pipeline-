@@ -17,6 +17,7 @@ Run:
 """
 
 import os
+import csv
 import tempfile
 import sqlite3
 import pandas as pd
@@ -24,9 +25,9 @@ import pandas as pd
 # ── redirect temp files to D: (C: has almost no free space) ──────────────────
 tempfile.tempdir = "D:\\tmp_pipeline"
 os.makedirs(tempfile.tempdir, exist_ok=True)
-os.environ["TMPDIR"]   = tempfile.tempdir
-os.environ["TEMP"]     = tempfile.tempdir
-os.environ["TMP"]      = tempfile.tempdir
+os.environ["TMPDIR"] = tempfile.tempdir
+os.environ["TEMP"]   = tempfile.tempdir
+os.environ["TMP"]    = tempfile.tempdir
 
 BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR  = os.path.join(BASE_DIR, "dataset")
@@ -52,36 +53,27 @@ def tsv_chunks(filename, cols):
         yield chunk
 
 
-def stream_to_db(filename, cols, table, con, transform=None):
-    """Stream a TSV directly into a SQLite table chunk-by-chunk."""
-    total = 0
-    first = True
-    for chunk in tsv_chunks(filename, cols):
-        if transform:
-            chunk = transform(chunk)
-        if chunk is None or len(chunk) == 0:
-            continue
-        chunk.to_sql(table, con, if_exists="replace" if first else "append",
-                     index=False)
-        total += len(chunk)
-        first = False
-    print(f"  [DB]  {table:<22}  {total:>10,} rows")
-    return total
-
-
-def save_clean_csv(table, con, name, limit=None):
-    """Export a DB table to a clean CSV file."""
-    sql = f"SELECT * FROM {table}"
-    if limit:
-        sql += f" LIMIT {limit}"
-    df = pd.read_sql(sql, con)
+def export_clean_csv(table, con, name):
+    """Export a DB table to a clean CSV using cursor fetchmany (no RAM spike)."""
     path = os.path.join(CLEAN_DIR, f"clean_{name}.csv")
-    df.to_csv(path, index=False)
-    print(f"  [CSV] clean_{name}.csv  ({len(df):,} rows)")
+    cur  = con.execute(f"SELECT * FROM {table}")
+    cols = [d[0] for d in cur.description]
+    total = 0
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(cols)
+        while True:
+            rows = cur.fetchmany(100_000)
+            if not rows:
+                break
+            writer.writerows(rows)
+            total += len(rows)
+    print(f"  [CSV] clean_{name}.csv  ({total:,} rows)")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Open DB and apply schema
+# STAGE 1 & 2 -- INGEST & CLEAN  |  STAGE 4 -- LOAD DATABASE
+# (interleaved: each table is cleaned then immediately written to SQLite)
 # ══════════════════════════════════════════════════════════════════════════════
 print("\n" + "="*58)
 print("  STAGE 1-4 -- INGEST, CLEAN & LOAD DATABASE")
@@ -111,22 +103,21 @@ loc = loc.rename(columns={
     "disambig_country": "country"
 })
 del loc_chunks
-# Build fast dict lookups
+# Build fast O(1) dict lookups: location_id -> city/state/country
 loc_city    = loc.set_index("location_id")["city"].to_dict()
 loc_state   = loc.set_index("location_id")["state"].to_dict()
 loc_country = loc.set_index("location_id")["country"].to_dict()
 del loc
-print(f"       location lookup ready")
+print("       location lookup ready")
 
 
 # ── [2/6] patents ─────────────────────────────────────────────────────────────
 print("\n  [2/6] patents ...")
 
-# load filing dates into a dict (small enough: one date per patent)
+# Build filing date dict: patent_id -> earliest filing_date string
 filing = {}
 for chunk in tsv_chunks("g_application.tsv", ["patent_id", "filing_date"]):
-    chunk["filing_date"] = pd.to_datetime(chunk["filing_date"],
-                                          errors="coerce")
+    chunk["filing_date"] = pd.to_datetime(chunk["filing_date"], errors="coerce")
     chunk = chunk.dropna(subset=["patent_id", "filing_date"])
     chunk = chunk.sort_values("filing_date").drop_duplicates("patent_id")
     for _, row in chunk.iterrows():
@@ -143,8 +134,7 @@ for chunk in tsv_chunks("g_patent.tsv",
     chunk = chunk.drop_duplicates("patent_id")
     seen_patents.update(chunk["patent_id"].tolist())
 
-    chunk["patent_date"] = pd.to_datetime(chunk["patent_date"],
-                                          errors="coerce")
+    chunk["patent_date"] = pd.to_datetime(chunk["patent_date"], errors="coerce")
     chunk["year"]        = chunk["patent_date"].dt.year.astype("Int64")
     chunk["grant_date"]  = chunk["patent_date"].dt.strftime("%Y-%m-%d")
     chunk["filing_date"] = chunk["patent_id"].map(filing)
@@ -162,7 +152,7 @@ print(f"       {total_patents:,} patents")
 
 # ── [3/6] inventors ───────────────────────────────────────────────────────────
 print("\n  [3/6] inventors ...")
-seen_inv = set()
+seen_inv  = set()
 total_inv = 0
 first = True
 for chunk in tsv_chunks("g_inventor_disambiguated.tsv",
@@ -180,8 +170,7 @@ for chunk in tsv_chunks("g_inventor_disambiguated.tsv",
     chunk = chunk.drop(columns=["location_id"])
     chunk = chunk[~chunk["inventor_id"].isin(seen_inv)]
     chunk = chunk.drop_duplicates("inventor_id")
-    chunk = chunk[chunk["name"] != ""]
-    chunk = chunk.dropna(subset=["inventor_id"])
+    chunk = chunk[chunk["name"] != ""].dropna(subset=["inventor_id"])
     chunk = chunk[["inventor_id", "name", "city", "state", "country"]]
     seen_inv.update(chunk["inventor_id"].tolist())
     chunk.to_sql("inventors", con,
@@ -197,7 +186,7 @@ print(f"       {total_inv:,} inventors")
 print("\n  [4/6] companies ...")
 seen_co  = set()
 total_co = 0
-co_index = {}   # patent_id -> [company_id, ...]  for patent_links
+co_index = {}   # patent_id -> [company_id, ...]  used to build patent_links
 first = True
 for chunk in tsv_chunks("g_assignee_disambiguated.tsv",
                         ["patent_id", "assignee_id",
@@ -205,13 +194,13 @@ for chunk in tsv_chunks("g_assignee_disambiguated.tsv",
                          "disambig_assignee_individual_name_first",
                          "disambig_assignee_individual_name_last",
                          "assignee_type", "location_id"]):
-    # collect patent->company links
+    # collect patent->company links for patent_links table
     for _, row in chunk[["patent_id", "assignee_id"]].dropna().iterrows():
         co_index.setdefault(row["patent_id"], [])
         if row["assignee_id"] not in co_index[row["patent_id"]]:
             co_index[row["patent_id"]].append(row["assignee_id"])
 
-    # build company rows
+    # build deduplicated company rows
     chunk["name"] = chunk["disambig_assignee_organization"].fillna("").str.strip()
     mask = chunk["name"] == ""
     chunk.loc[mask, "name"] = (
@@ -250,7 +239,7 @@ first = True
 for chunk in tsv_chunks("g_inventor_disambiguated.tsv",
                         ["patent_id", "inventor_id"]):
     chunk = chunk.dropna()
-    # map each patent to its list of company_ids, then explode
+    # map each patent to its company list, explode into one row per combination
     chunk["company_id"] = chunk["patent_id"].map(co_index)
     chunk = chunk.explode("company_id")
     chunk = chunk[["patent_id", "inventor_id", "company_id"]]
@@ -280,10 +269,9 @@ print(f"  [DB]  classifications         {total_cls:>10,} rows")
 
 total_cit = 0
 first = True
-cit_path = os.path.join(DATA_DIR, "g_us_patent_citation.tsv")
 for chunk in pd.read_csv(
-    cit_path, sep="\t",
-    usecols=["patent_id", "citation_patent_id", "citation_category"],
+    os.path.join(DATA_DIR, "g_us_patent_citation.tsv"),
+    sep="\t", usecols=["patent_id", "citation_patent_id", "citation_category"],
     dtype=str, chunksize=CHUNK, engine="python", on_bad_lines="skip"
 ):
     chunk = chunk.rename(columns={"citation_category": "category"})
@@ -297,15 +285,17 @@ con.commit()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# STAGE 3 -- EXPORT CLEAN CSVs  (read back from DB -- already clean)
+# STAGE 3 -- EXPORT CLEAN CSVs
+# Uses cursor fetchmany() to stream rows out of SQLite without loading
+# the full table into RAM (inventors alone is 4.3M rows / 200MB).
 # ══════════════════════════════════════════════════════════════════════════════
 print("\n" + "="*58)
 print("  STAGE 3 -- EXPORT CLEAN CSVs  -->  data/")
 print("="*58 + "\n")
 
-save_clean_csv("patents",   con, "patents")
-save_clean_csv("inventors", con, "inventors")
-save_clean_csv("companies", con, "companies")
+export_clean_csv("patents",   con, "patents")
+export_clean_csv("inventors", con, "inventors")
+export_clean_csv("companies", con, "companies")
 
 con.close()
 
