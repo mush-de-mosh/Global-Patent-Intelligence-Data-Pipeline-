@@ -1,14 +1,13 @@
 """
-Global Patent Intelligence -- Reports
-=======================================
+Global Patent Intelligence - Reports
+
 Generates:
-  A. Console report  (terminal)
+  A. Console report
   B. CSV exports     -->  reports/
   C. JSON report     -->  reports/patent_report.json
-  D. PNG charts      -->  reports/  [extra marks]
+  D. PNG charts      -->  reports/
 
-Run:
-    python reports.py
+Run: python reports.py
 """
 
 import os
@@ -21,22 +20,20 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
-DB_PATH     = os.path.join(BASE_DIR, "patents.db") 
+DB_PATH     = os.path.join(BASE_DIR, "patents.db")
 REPORTS_DIR = os.path.join(BASE_DIR, "reports")
 os.makedirs(REPORTS_DIR, exist_ok=True)
 
 con = sqlite3.connect(DB_PATH)
-# redirect SQLite temp files to D: (C: has almost no free space)
 con.execute("PRAGMA temp_store=FILE")
 con.execute("PRAGMA temp_store_directory='D:\\\\tmp_pipeline'")
-con.execute("PRAGMA cache_size=-65536")   # 64 MB page cache
+con.execute("PRAGMA cache_size=-65536")
 
 
 def q(sql):
     return pd.read_sql(sql, con)
 
 
-# ── run all queries ───────────────────────────────────────────────────────────
 total_patents   = q("SELECT COUNT(*) AS n FROM patents").iloc[0]["n"]
 total_inventors = q("SELECT COUNT(*) AS n FROM inventors").iloc[0]["n"]
 total_companies = q("SELECT COUNT(*) AS n FROM companies").iloc[0]["n"]
@@ -121,9 +118,7 @@ inventor_ranking = q("""
 """)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# A. CONSOLE REPORT
-# ══════════════════════════════════════════════════════════════════════════════
+# A. Console report
 W = 56
 
 def div(c="="):  print(c * W)
@@ -169,7 +164,7 @@ for i, row in top_categories.iterrows():
     print(f"  {i+1:>2}. Class {str(row['mainclass_id']):<12} "
           f"{int(row['patents']):>8,} patents")
 
-sec("INVENTOR RANKINGS  (window functions)")
+sec("INVENTOR RANKINGS")
 print(f"  {'Rank':<5} {'Inventor':<30} {'Country':<8} "
       f"{'Patents':>7}  {'In Country':>10}")
 div("-")
@@ -185,9 +180,7 @@ div()
 print()
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# B. CSV EXPORTS
-# ══════════════════════════════════════════════════════════════════════════════
+# B. CSV exports
 def save_csv(df, name):
     path = os.path.join(REPORTS_DIR, name)
     df.to_csv(path, index=False)
@@ -202,9 +195,7 @@ save_csv(top_categories,   "top_categories.csv")
 save_csv(inventor_ranking, "inventor_ranking.csv")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# C. JSON REPORT
-# ══════════════════════════════════════════════════════════════════════════════
+# C. JSON report
 report = {
     "summary": {
         "total_patents":   int(total_patents),
@@ -255,9 +246,7 @@ with open(json_path, "w") as f:
 print(f"  [JSON] patent_report.json")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# D. CHARTS
-# ══════════════════════════════════════════════════════════════════════════════
+# D. Charts
 print("\nGenerating charts ...")
 
 DARK = {
@@ -283,33 +272,28 @@ def savefig(name):
     print(f"  [PNG] {name}")
 
 
-# Chart 1 — Top 10 Inventors
 fig, ax = plt.subplots(figsize=(10, 6))
 df = top_inventors.sort_values("patents")
 bars = ax.barh(df["inventor"], df["patents"].astype(int), color=BLUE)
 ax.bar_label(bars, fmt="%,.0f", padding=4, color="#eee", fontsize=9)
 ax.set_xlabel("Patents")
 ax.set_title("Top 10 Inventors by Patent Count", fontsize=14, pad=12)
-ax.xaxis.set_major_formatter(
-    mticker.FuncFormatter(lambda x, _: f"{int(x):,}"))
+ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{int(x):,}"))
 ax.grid(axis="x")
 plt.tight_layout()
 savefig("chart_top_inventors.png")
 
-# Chart 2 — Top 10 Companies
 fig, ax = plt.subplots(figsize=(10, 6))
 df = top_companies.sort_values("patents")
 bars = ax.barh(df["company"], df["patents"].astype(int), color=ORANGE)
 ax.bar_label(bars, fmt="%,.0f", padding=4, color="#eee", fontsize=9)
 ax.set_xlabel("Patents")
 ax.set_title("Top 10 Companies by Patent Count", fontsize=14, pad=12)
-ax.xaxis.set_major_formatter(
-    mticker.FuncFormatter(lambda x, _: f"{int(x):,}"))
+ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{int(x):,}"))
 ax.grid(axis="x")
 plt.tight_layout()
 savefig("chart_top_companies.png")
 
-# Chart 3 — Patents Per Year
 fig, ax = plt.subplots(figsize=(12, 5))
 years  = yearly_trends["year"].astype(int)
 totals = yearly_trends["total_patents"].astype(int)
@@ -318,29 +302,24 @@ ax.fill_between(years, totals, alpha=0.15, color=BLUE)
 ax.set_xlabel("Year")
 ax.set_ylabel("Patents Granted")
 ax.set_title("Patent Grants Per Year (1990-2024)", fontsize=14, pad=12)
-ax.yaxis.set_major_formatter(
-    mticker.FuncFormatter(lambda x, _: f"{int(x):,}"))
+ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{int(x):,}"))
 ax.grid(axis="y")
 plt.tight_layout()
 savefig("chart_yearly_trends.png")
 
-# Chart 4 — Top 15 Countries
 fig, ax = plt.subplots(figsize=(12, 6))
 df = top_countries.head(15)
-bars = ax.bar(df["country"].astype(str),
-              df["total_patents"].astype(int), color=BLUE)
+bars = ax.bar(df["country"].astype(str), df["total_patents"].astype(int), color=BLUE)
 ax.bar_label(bars, fmt="%,.0f", padding=3, color="#eee", fontsize=8)
 ax.set_xlabel("Country")
 ax.set_ylabel("Patents")
 ax.set_title("Top 15 Countries by Patent Count", fontsize=14, pad=12)
-ax.yaxis.set_major_formatter(
-    mticker.FuncFormatter(lambda x, _: f"{int(x):,}"))
+ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{int(x):,}"))
 plt.xticks(rotation=35, ha="right")
 ax.grid(axis="y")
 plt.tight_layout()
 savefig("chart_top_countries.png")
 
-# Chart 5 — Top 10 USPC Categories (pie)
 fig, ax = plt.subplots(figsize=(8, 8))
 df = top_categories.head(10)
 wedges, texts, autotexts = ax.pie(

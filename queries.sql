@@ -1,13 +1,8 @@
--- ============================================================
---  Global Patent Intelligence -- Analysis Queries
---  Run against : patents.db  (SQLite 3)
---  Execute via : python reports.py   OR   sqlite3 patents.db
--- ============================================================
+-- Global Patent Intelligence - Analysis Queries
+-- Run against: patents.db
 
 
--- ------------------------------------------------------------
--- Q1: Top Inventors -- who has the most patents?
--- ------------------------------------------------------------
+-- Q1: Top Inventors
 SELECT
     i.name                          AS inventor,
     i.country,
@@ -20,9 +15,7 @@ ORDER  BY total_patents DESC
 LIMIT  15;
 
 
--- ------------------------------------------------------------
--- Q2: Top Companies -- which companies own the most patents?
--- ------------------------------------------------------------
+-- Q2: Top Companies
 SELECT
     c.name                          AS company,
     c.country,
@@ -36,9 +29,7 @@ ORDER  BY total_patents DESC
 LIMIT  15;
 
 
--- ------------------------------------------------------------
--- Q3: Countries -- which countries produce the most patents?
--- ------------------------------------------------------------
+-- Q3: Countries
 SELECT
     i.country,
     COUNT(DISTINCT pl.patent_id)    AS total_patents,
@@ -55,9 +46,7 @@ ORDER  BY total_patents DESC
 LIMIT  20;
 
 
--- ------------------------------------------------------------
--- Q4: Trends Over Time -- patents granted per year
--- ------------------------------------------------------------
+-- Q4: Trends Over Time
 SELECT
     year,
     COUNT(*)                        AS total_patents,
@@ -71,9 +60,7 @@ GROUP  BY year
 ORDER  BY year;
 
 
--- ------------------------------------------------------------
--- Q5: JOIN -- patents combined with inventors and companies
--- ------------------------------------------------------------
+-- Q5: JOIN - patents with inventors and companies
 SELECT
     p.patent_id,
     p.title,
@@ -92,11 +79,8 @@ ORDER  BY p.year DESC, p.patent_id
 LIMIT  50;
 
 
--- ------------------------------------------------------------
--- Q6: CTE -- top company per country (broken into steps)
--- ------------------------------------------------------------
+-- Q6: CTE - top company per country
 WITH company_counts AS (
-    -- Step 1: count patents per company
     SELECT
         c.company_id,
         c.name      AS company,
@@ -109,7 +93,6 @@ WITH company_counts AS (
     GROUP  BY c.company_id
 ),
 ranked AS (
-    -- Step 2: rank companies within each country
     SELECT *,
            ROW_NUMBER() OVER (
                PARTITION BY country
@@ -117,7 +100,6 @@ ranked AS (
            ) AS rank_in_country
     FROM   company_counts
 )
--- Step 3: keep only the #1 company per country
 SELECT
     country,
     company,
@@ -128,9 +110,7 @@ ORDER  BY total_patents DESC
 LIMIT  20;
 
 
--- ------------------------------------------------------------
--- Q7: Ranking -- inventors ranked with window functions
--- ------------------------------------------------------------
+-- Q7: Ranking with window functions
 WITH inventor_counts AS (
     SELECT
         i.inventor_id,
@@ -147,16 +127,11 @@ SELECT
     inventor,
     country,
     total_patents,
-    RANK()  OVER (
-        ORDER BY total_patents DESC
-    )                                                           AS global_rank,
-    RANK()  OVER (
-        PARTITION BY country
-        ORDER BY total_patents DESC
-    )                                                           AS rank_in_country,
+    RANK()  OVER (ORDER BY total_patents DESC)                       AS global_rank,
+    RANK()  OVER (PARTITION BY country ORDER BY total_patents DESC)  AS rank_in_country,
     ROUND(
         100.0 * total_patents / SUM(total_patents) OVER (), 4
-    )                                                           AS pct_of_all_patents
+    )                                                                AS pct_of_all_patents
 FROM   inventor_counts
 ORDER  BY global_rank
 LIMIT  30;

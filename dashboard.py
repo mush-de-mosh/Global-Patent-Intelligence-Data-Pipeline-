@@ -1,8 +1,7 @@
 """
-Global Patent Intelligence -- Streamlit Dashboard
-===================================================
-Run with:
-    streamlit run dashboard.py
+Global Patent Intelligence - Streamlit Dashboard
+
+Run: streamlit run dashboard.py
 """
 
 import os
@@ -36,7 +35,6 @@ def run(sql):
     return pd.read_sql(sql, get_con())
 
 
-# ── sidebar ───────────────────────────────────────────────────────────────────
 st.sidebar.title("Patent Intelligence")
 page  = st.sidebar.radio(
     "Navigate",
@@ -61,7 +59,6 @@ def dark_fig(w=10, h=5):
     return fig, ax
 
 
-# ── overview ──────────────────────────────────────────────────────────────────
 if page == "Overview":
     st.title("Global Patent Intelligence Dashboard")
     st.markdown("Real-world patent data from [PatentsView](https://patentsview.org)")
@@ -72,9 +69,9 @@ if page == "Overview":
     total_l = run("SELECT COUNT(*) AS n FROM patent_links").iloc[0]["n"]
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Total Patents",   f"{int(total_p):,}")
-    c2.metric("Total Inventors", f"{int(total_i):,}")
-    c3.metric("Total Companies", f"{int(total_c):,}")
+    c1.metric("Total Patents",    f"{int(total_p):,}")
+    c2.metric("Total Inventors",  f"{int(total_i):,}")
+    c3.metric("Total Companies",  f"{int(total_c):,}")
     c4.metric("Relationship Rows", f"{int(total_l):,}")
 
     st.subheader("Patents Granted Per Year")
@@ -97,7 +94,6 @@ if page == "Overview":
     plt.close()
 
 
-# ── inventors ─────────────────────────────────────────────────────────────────
 elif page == "Inventors":
     st.title("Top Inventors")
     df = run(f"""
@@ -125,7 +121,6 @@ elif page == "Inventors":
     plt.close()
 
 
-# ── companies ─────────────────────────────────────────────────────────────────
 elif page == "Companies":
     st.title("Top Companies")
     df = run(f"""
@@ -153,7 +148,6 @@ elif page == "Companies":
     plt.close()
 
 
-# ── countries ─────────────────────────────────────────────────────────────────
 elif page == "Countries":
     st.title("Patents by Country")
     df = run(f"""
@@ -185,7 +179,6 @@ elif page == "Countries":
     plt.close()
 
 
-# ── trends ────────────────────────────────────────────────────────────────────
 elif page == "Trends":
     st.title("Patent Trends Over Time")
     year_min, year_max = st.slider("Year range", 1976, 2024, (1990, 2024))
@@ -213,7 +206,6 @@ elif page == "Trends":
     plt.close()
 
 
-# ── categories ────────────────────────────────────────────────────────────────
 elif page == "Categories":
     st.title("Top Patent Categories (USPC)")
     df = run(f"""

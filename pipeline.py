@@ -1,19 +1,13 @@
 """
-Global Patent Intelligence -- Data Pipeline
-============================================
-Stage 1 : Ingest raw TSV files in 100 000-row chunks
-Stage 2 : Clean with pandas (nulls, dates, whitespace, dedup)
-Stage 3 : Export clean CSVs  -->  data/
-Stage 4 : Load SQLite DB     -->  patents.db  (via schema.sql)
+Global Patent Intelligence - Data Pipeline
 
-Memory strategy
----------------
-- All large tables are written to SQLite chunk-by-chunk (never fully in RAM)
-- Temp files are redirected to D: which has ~83 GB free
-- Only small lookup tables (locations, co_index dict) are held in RAM
+Stages:
+  1. Ingest raw TSV files in chunks
+  2. Clean with pandas
+  3. Export clean CSVs to data/
+  4. Load SQLite database
 
-Run:
-    python pipeline.py
+Run: python pipeline.py
 """
 
 import os
@@ -22,7 +16,7 @@ import tempfile
 import sqlite3
 import pandas as pd
 
-# ── redirect temp files to D: (C: has almost no free space) ──────────────────
+# use D: for temp files since C: has limited space
 tempfile.tempdir = "D:\\tmp_pipeline"
 os.makedirs(tempfile.tempdir, exist_ok=True)
 os.environ["TMPDIR"] = tempfile.tempdir
@@ -33,12 +27,10 @@ BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR  = os.path.join(BASE_DIR, "dataset")
 DB_PATH   = os.path.join(BASE_DIR, "patents.db")
 CLEAN_DIR = os.path.join(BASE_DIR, "data")
-CHUNK     = 100_000   # 100 000 rows per chunk
+CHUNK     = 100_000
 
 os.makedirs(CLEAN_DIR, exist_ok=True)
 
-
-# ── helpers ───────────────────────────────────────────────────────────────────
 
 def tsv_chunks(filename, cols):
     """Yield cleaned chunks from a TSV file."""
@@ -54,7 +46,7 @@ def tsv_chunks(filename, cols):
 
 
 def export_clean_csv(table, con, name):
-    """Export a DB table to a clean CSV using cursor fetchmany (no RAM spike)."""
+    """Stream a DB table to CSV without loading it fully into RAM."""
     path = os.path.join(CLEAN_DIR, f"clean_{name}.csv")
     cur  = con.execute(f"SELECT * FROM {table}")
     cols = [d[0] for d in cur.description]
@@ -71,10 +63,6 @@ def export_clean_csv(table, con, name):
     print(f"  [CSV] clean_{name}.csv  ({total:,} rows)")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# STAGE 1 & 2 -- INGEST & CLEAN  |  STAGE 4 -- LOAD DATABASE
-# (interleaved: each table is cleaned then immediately written to SQLite)
-# ══════════════════════════════════════════════════════════════════════════════
 print("\n" + "="*58)
 print("  STAGE 1-4 -- INGEST, CLEAN & LOAD DATABASE")
 print("="*58)
@@ -89,8 +77,8 @@ with open(os.path.join(BASE_DIR, "schema.sql")) as f:
     con.executescript(f.read())
 
 
-# ── [1/6] locations (small lookup -- load fully into RAM) ────────────────────
-print("\n  [1/6] locations (lookup table) ...")
+# [1/6] locations
+print("\n  [1/6] locations ...")
 loc_chunks = []
 for chunk in tsv_chunks("g_location_disambiguated.tsv",
                         ["location_id", "disambig_city",
@@ -103,7 +91,6 @@ loc = loc.rename(columns={
     "disambig_country": "country"
 })
 del loc_chunks
-# Build fast O(1) dict lookups: location_id -> city/state/country
 loc_city    = loc.set_index("location_id")["city"].to_dict()
 loc_state   = loc.set_index("location_id")["state"].to_dict()
 loc_country = loc.set_index("location_id")["country"].to_dict()
@@ -111,10 +98,9 @@ del loc
 print("       location lookup ready")
 
 
-# ── [2/6] patents ─────────────────────────────────────────────────────────────
+# [2/6] patents
 print("\n  [2/6] patents ...")
 
-# Build filing date dict: patent_id -> earliest filing_date string
 filing = {}
 for chunk in tsv_chunks("g_application.tsv", ["patent_id", "filing_date"]):
     chunk["filing_date"] = pd.to_datetime(chunk["filing_date"], errors="coerce")
@@ -150,7 +136,7 @@ del filing, seen_patents
 print(f"       {total_patents:,} patents")
 
 
-# ── [3/6] inventors ───────────────────────────────────────────────────────────
+# [3/6] inventors
 print("\n  [3/6] inventors ...")
 seen_inv  = set()
 total_inv = 0
@@ -182,11 +168,11 @@ del seen_inv
 print(f"       {total_inv:,} inventors")
 
 
-# ── [4/6] companies + build co_index dict ────────────────────────────────────
+# [4/6] companies
 print("\n  [4/6] companies ...")
 seen_co  = set()
 total_co = 0
-co_index = {}   # patent_id -> [company_id, ...]  used to build patent_links
+co_index = {}
 first = True
 for chunk in tsv_chunks("g_assignee_disambiguated.tsv",
                         ["patent_id", "assignee_id",
@@ -194,13 +180,11 @@ for chunk in tsv_chunks("g_assignee_disambiguated.tsv",
                          "disambig_assignee_individual_name_first",
                          "disambig_assignee_individual_name_last",
                          "assignee_type", "location_id"]):
-    # collect patent->company links for patent_links table
     for _, row in chunk[["patent_id", "assignee_id"]].dropna().iterrows():
         co_index.setdefault(row["patent_id"], [])
         if row["assignee_id"] not in co_index[row["patent_id"]]:
             co_index[row["patent_id"]].append(row["assignee_id"])
 
-    # build deduplicated company rows
     chunk["name"] = chunk["disambig_assignee_organization"].fillna("").str.strip()
     mask = chunk["name"] == ""
     chunk.loc[mask, "name"] = (
@@ -229,17 +213,15 @@ for chunk in tsv_chunks("g_assignee_disambiguated.tsv",
 
 del seen_co
 print(f"       {total_co:,} companies")
-print(f"       co_index covers {len(co_index):,} patents")
 
 
-# ── [5/6] patent_links ────────────────────────────────────────────────────────
-print("\n  [5/6] patent_links (streaming) ...")
+# [5/6] patent_links
+print("\n  [5/6] patent_links ...")
 total_links = 0
 first = True
 for chunk in tsv_chunks("g_inventor_disambiguated.tsv",
                         ["patent_id", "inventor_id"]):
     chunk = chunk.dropna()
-    # map each patent to its company list, explode into one row per combination
     chunk["company_id"] = chunk["patent_id"].map(co_index)
     chunk = chunk.explode("company_id")
     chunk = chunk[["patent_id", "inventor_id", "company_id"]]
@@ -252,7 +234,7 @@ del co_index
 print(f"       {total_links:,} relationship rows")
 
 
-# ── [6/6] supporting tables ───────────────────────────────────────────────────
+# [6/6] classifications + citations
 print("\n  [6/6] classifications + citations ...")
 
 total_cls = 0
@@ -284,11 +266,6 @@ print(f"  [DB]  citations               {total_cit:>10,} rows")
 con.commit()
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# STAGE 3 -- EXPORT CLEAN CSVs
-# Uses cursor fetchmany() to stream rows out of SQLite without loading
-# the full table into RAM (inventors alone is 4.3M rows / 200MB).
-# ══════════════════════════════════════════════════════════════════════════════
 print("\n" + "="*58)
 print("  STAGE 3 -- EXPORT CLEAN CSVs  -->  data/")
 print("="*58 + "\n")
